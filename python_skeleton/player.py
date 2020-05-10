@@ -7,6 +7,11 @@ from skeleton.states import NUM_ROUNDS, STARTING_STACK, BIG_BLIND, SMALL_BLIND
 from skeleton.bot import Bot
 from skeleton.runner import parse_args, run_bot
 
+import tensorflow as tf
+from tensorflow import keras
+import numpy as np
+from collections import deque
+
 
 class Player(Bot):
     '''
@@ -23,8 +28,124 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        pass
+        
+        tf.random.set_seed(42)
+        np.random.seed(42)
 
+        self.input_shape = [45 + 6] # == env.observation_space.shape
+        self.n_outputs = 10 # == fold, check, call, min raise, 1/4 pot, 1/2 pot, 3/4 pot, pot, 1.5 pot, all in
+
+        self.model = keras.models.Sequential([
+            keras.layers.Dense(32, activation="elu", input_shape=self.input_shape),
+            keras.layers.Dense(32, activation="elu"),
+            keras.layers.Dense(self.n_outputs)
+        ])
+        self.terminal_state = None
+        self.prev_state = None
+        self.state = None
+
+    def getCardRank(self, s):
+        d = {
+            'T': 10,
+            'J': 11,
+            'Q': 12,
+            'K': 13,
+            'A': 14,
+        }
+        return d.get(s[0],int(s[0]))
+    def getCardSuit(self, s):
+        return [int(s[1 == 's']), int(s[1 == 'h']), int(s[1 == 'c']), int(s[1 == 'd'])]
+
+    def getState(self):
+        ret = getCardRank(self.round_state.hands[self.active][0]) + getCardSuit(self.round_state.hands[self.active][0]) + getCardRank(self.round_state.hands[self.active][1]) + getCardSuit(self.round_state.hands[self.active][1])
+        for i in range(self.round_state.street):
+            ret += getCardRank(self.round_state.deck[i]) + getCardSuit(self.round_state.deck[i])
+        for i in range(5 - self.round_state.street):
+            ret += [0,0,0,0,0]
+        if self.terminal_state == None:
+            ret += [0,0,0,0,0,0,0,0,0,0]
+        elif self.terminal_state.previous_state.hands[1-self.active] == []:
+            ret += [0,0,0,0,0,0,0,0,0,0]
+        else:
+            ret += getCardRank(self.terminal_state.previous_state.hands[1-self.active][0]) + getCardSuit(self.terminal_state.previous_state.hands[1-self.active][0]) + getCardRank(self.terminal_state.previous_state.hands[1-self.active][1]) + getCardSuit(self.terminal_state.previous_state.hands[1-self.active][1])
+        
+        my_pip = self.round_state.pips[active]  # the number of chips you have contributed to the pot this round of betting
+        opp_pip = self.round_state.pips[1-active]  # the number of chips your opponent has contributed to the pot this round of betting
+        my_stack = self.round_state.stacks[active]  # the number of chips you have remaining
+        opp_stack = self.round_state.stacks[1-active]  # the number of chips your opponent has remaining
+
+        ret += [my_pip, opp_pip, my_stack, opp_stack, self.active]
+
+        return ret
+
+    def epsilon_greedy_policy(self, state, epsilon=0):
+        if np.random.rand() < epsilon:
+            return np.random.randint(2)
+        else:
+            Q_values = self.model.predict(state[np.newaxis])
+            return np.argmax(Q_values[0])
+    
+    replay_memory = deque(maxlen=2000)
+
+    def sample_experiences(self, batch_size):
+        indices = np.random.randint(len(replay_memory), size=batch_size)
+        batch = [replay_memory[index] for index in indices]
+        states, actions, rewards, next_states, dones = [
+            np.array([experience[field_index] for experience in batch])
+            for field_index in range(5)]
+        return states, actions, rewards, next_states, dones       
+    
+    def play_one_step(self, env, state, epsilon):
+        action = epsilon_greedy_policy(state, epsilon)
+        next_state, reward, done, info = env.step(action)
+        replay_memory.append((state, action, reward, next_state, done))
+        return next_state, reward, done, info
+
+    batch_size = 32
+    discount_rate = 0.95
+    optimizer = keras.optimizers.Adam(lr=1e-3)
+    loss_fn = keras.losses.mean_squared_error
+
+    def training_step(self, batch_size):
+        experiences = sample_experiences(batch_size)
+        states, actions, rewards, next_states, dones = experiences
+        next_Q_values = self.model.predict(next_states)
+        max_next_Q_values = np.max(next_Q_values, axis=1)
+        target_Q_values = rewards + (1 - dones) * discount_rate * max_next_Q_values
+        mask = tf.one_hot(actions, self.n_outputs)
+        with tf.GradientTape() as tape:
+            all_Q_values = self.model(states)
+            Q_values = tf.reduce_sum(all_Q_values * mask, axis=1, keepdims=True)
+            loss = tf.reduce_mean(loss_fn(target_Q_values, Q_values))
+        grads = tape.gradient(loss, self.model.trainable_variables)
+        optimizer.apply_gradients(zip(grads, self.model.trainable_variables))
+
+    env.seed(42)
+    np.random.seed(42)
+    tf.random.set_seed(42)
+
+    rewards = [] 
+    best_score = 0
+
+
+    for episode in range(600):
+        obs = env.reset()    
+        for step in range(200):
+            epsilon = max(1 - episode / 500, 0.01)
+            obs, reward, done, info = play_one_step(env, obs, epsilon)
+            if done:
+                break
+        rewards.append(step) # Not shown in the book
+        if step > best_score: # Not shown
+            best_weights = model.get_weights() # Not shown
+            best_score = step # Not shown
+        print("\rEpisode: {}, Steps: {}, eps: {:.3f}".format(episode, step + 1, epsilon), end="") # Not shown
+        if episode > 50:
+            training_step(batch_size)
+
+    model.set_weights(best_weights)
+
+    
     def handle_new_round(self, game_state, round_state, active):
         '''
         Called when a new round starts. Called NUM_ROUNDS times.
@@ -37,11 +158,15 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        #my_bankroll = game_state.bankroll  # the total number of chips you've gained or lost from the beginning of the game to the start of this round
-        #game_clock = game_state.game_clock  # the total number of seconds your bot has left to play this game
-        #round_num = game_state.round_num  # the round number from 1 to NUM_ROUNDS
-        #my_cards = round_state.hands[active]  # your cards
-        #big_blind = bool(active)  # True if you are the big blind
+        my_bankroll = game_state.bankroll  # the total number of chips you've gained or lost from the beginning of the game to the start of this round
+        game_clock = game_state.game_clock  # the total number of seconds your bot has left to play this game
+        round_num = game_state.round_num  # the round number from 1 to NUM_ROUNDS
+        my_cards = round_state.hands[active]  # your cards
+        big_blind = bool(active)  # True if you are the big blind
+        self.game_state = game_state
+        self.round_state = round_state
+        self.active = active
+        self.terminal_state = None
         pass
 
     def handle_round_over(self, game_state, terminal_state, active):
@@ -56,12 +181,15 @@ class Player(Bot):
         Returns:
         Nothing.
         '''
-        #my_delta = terminal_state.deltas[active]  # your bankroll change from this round
-        #previous_state = terminal_state.previous_state  # RoundState before payoffs
-        #street = previous_state.street  # 0, 3, 4, or 5 representing when this round ended
-        #my_cards = previous_state.hands[active]  # your cards
-        #opp_cards = previous_state.hands[1-active]  # opponent's cards or [] if not revealed
-        pass
+        my_delta = terminal_state.deltas[active]  # your bankroll change from this round
+        previous_state = terminal_state.previous_state  # RoundState before payoffs
+        street = previous_state.street  # 0, 3, 4, or 5 representing when this round ended
+        my_cards = previous_state.hands[active]  # your cards
+        opp_cards = previous_state.hands[1-active]  # opponent's cards or [] if not revealed
+        self.game_state = game_state
+        self.terminal_state = terminal_state
+        self.active = active
+        
 
     def get_action(self, game_state, round_state, active):
         '''
@@ -76,24 +204,34 @@ class Player(Bot):
         Returns:
         Your action.
         '''
+        self.game_state = game_state
+        self.round_state = round_state
+        self.active = active
+
         legal_actions = round_state.legal_actions()  # the actions you are allowed to take
-        #street = round_state.street  # 0, 3, 4, or 5 representing pre-flop, flop, turn, or river respectively
-        #my_cards = round_state.hands[active]  # your cards
-        #board_cards = round_state.deck[:street]  # the board cards
-        #my_pip = round_state.pips[active]  # the number of chips you have contributed to the pot this round of betting
-        #opp_pip = round_state.pips[1-active]  # the number of chips your opponent has contributed to the pot this round of betting
-        #my_stack = round_state.stacks[active]  # the number of chips you have remaining
-        #opp_stack = round_state.stacks[1-active]  # the number of chips your opponent has remaining
-        #continue_cost = opp_pip - my_pip  # the number of chips needed to stay in the pot
-        #my_contribution = STARTING_STACK - my_stack  # the number of chips you have contributed to the pot
-        #opp_contribution = STARTING_STACK - opp_stack  # the number of chips your opponent has contributed to the pot
-        #if RaiseAction in legal_actions:
-        #    min_raise, max_raise = round_state.raise_bounds()  # the smallest and largest numbers of chips for a legal bet/raise
-        #    min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
-        #    max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
+        street = round_state.street  # 0, 3, 4, or 5 representing pre-flop, flop, turn, or river respectively
+        my_cards = round_state.hands[active]  # your cards
+        board_cards = round_state.deck[:street]  # the board cards
+        my_pip = round_state.pips[active]  # the number of chips you have contributed to the pot this round of betting
+        opp_pip = round_state.pips[1-active]  # the number of chips your opponent has contributed to the pot this round of betting
+        my_stack = round_state.stacks[active]  # the number of chips you have remaining
+        opp_stack = round_state.stacks[1-active]  # the number of chips your opponent has remaining
+        continue_cost = opp_pip - my_pip  # the number of chips needed to stay in the pot
+        my_contribution = STARTING_STACK - my_stack  # the number of chips you have contributed to the pot
+        opp_contribution = STARTING_STACK - opp_stack  # the number of chips your opponent has contributed to the pot
+        
+        input = [getCardRank(my_cards[0]), getCardRank(my_cards[1])]
+
+
+        if RaiseAction in legal_actions:
+           min_raise, max_raise = round_state.raise_bounds()  # the smallest and largest numbers of chips for a legal bet/raise
+           min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
+           max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
         if CheckAction in legal_actions:  # check-call
             return CheckAction()
         return CallAction()
+        self.game_state = game_state
+        self.round_state = round_state
 
 
 if __name__ == '__main__':
