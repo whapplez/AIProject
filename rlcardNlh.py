@@ -5,17 +5,21 @@ save_plot_every = 1000
 evaluate_num = 10000
 
 # The paths for saving the logs and learning curves
-root_path = './experiments/leduc_holdem_nfsp_result/'
+root_path = './experiments/nl_holdem_nfsp_result/'
 log_path = root_path + 'log.txt'
-csv_path = root_path + 'performance.csv'
+csv_path = log_path + '/performance.csv'
 figure_path = root_path + 'figures/'
+save_dir = 'models/nl_holdem_nfsp/'
+# checkpoint_prefix = os.path.join(save_dir, "ckpt")
 ### Settings for Evaluation ###
 
 ### Step 1: Make the Environment. ###
+import os
 import rlcard
 from rlcard.agents.random_agent import RandomAgent
 from rlcard.utils.utils import set_global_seed
 from rlcard.utils.logger import Logger
+from rlcard.utils.logger import plot
 # Make environment
 env = rlcard.make('no-limit-holdem')
 eval_env = rlcard.make('no-limit-holdem')
@@ -43,8 +47,11 @@ with tf.Session() as sess:
                           q_update_target_estimator_every=norm_step,
                           q_mlp_layers=[128,128])
         agents.append(agent)
-        
-    sess.run(tf.global_variables_initializer()) # Initialize the parameters of policy networks
+    # with sess.as_default():  #uncomment when loading 
+    #     saver = tf.train.Saver()
+    #     saver.restore(sess, tf.train.latest_checkpoint(save_dir))
+
+    sess.run(tf.global_variables_initializer()) # comment out when loading
     env.set_agents(agents) # Setup all nfsp agents into training environments
     
     # Setup random agent for evaluation
@@ -52,7 +59,7 @@ with tf.Session() as sess:
     eval_env.set_agents([agents[0], random_agent])
 
     ### Step 3: Generate game data and train the agents. ###
-    episode_num = 10000000 # set the episode number
+    episode_num = 500 # set the episode number
     step_counters = [0 for _ in range(env.player_num)] # Count the number of steps
 
     # Init a Logger to plot the learning curve
@@ -92,11 +99,17 @@ with tf.Session() as sess:
             logger.log('Timestep: {} Average reward is {}'.format(env.timestep, float(reward)/evaluate_num))
 
             # Add point to logger
-            # logger.add_point(x=env.timestep, y=float(reward)/evaluate_num)
+            logger.log_performance(env.timestep, float(reward)/evaluate_num)
 
         # Make plot
-        # if episode % save_plot_every == 0 and episode > 0:
-        #     logger.make_plot(save_path=figure_path+str(episode)+'.png')
+        if episode % 100000 == 0 and episode > 0:
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            saver = tf.train.Saver()
+            saver.save(sess, os.path.join(save_dir, 'model'+str(episode//100000)))
+        #     logger.plot('NSFP')
 
     # Make the final plot
-    # logger.make_plot(save_path=figure_path+'final_'+str(episode)+'.png')
+    # plot(csv_path, figure_path + 'fig.png', 'NSFP')
+    
+    
