@@ -27,7 +27,7 @@ TerminalState = namedtuple('TerminalState', ['deltas', 'previous_state'])
 STREET_NAMES = ['Flop', 'Turn', 'River']
 DECODE = {'F': FoldAction, 'C': CallAction, 'K': CheckAction, 'R': RaiseAction}
 CCARDS = lambda cards: ','.join(map(str, cards))
-PCARDS = lambda cards: '{} [{}]'.format(' '.join(map(str, cards)), ' '.join(map(str, map(PERM.get, cards))))
+PCARDS = lambda cards: '{}'.format(' '.join(map(str, cards)))
 PVALUE = lambda name, value: ', {} ({})'.format(name, value)
 STATUS = lambda players: ''.join([PVALUE(p.name, p.bankroll) for p in players])
 
@@ -66,8 +66,8 @@ class RoundState(namedtuple('_RoundState', ['button', 'street', 'pips', 'stacks'
 
         global STRAIGHTS
 
-        score0 = eval7.evaluate(list(map(PERM.get, self.deck.peek(5) + self.hands[0])))
-        score1 = eval7.evaluate(list(map(PERM.get, self.deck.peek(5) + self.hands[1])))
+        score0 = eval7.evaluate(list(self.deck.peek(5) + self.hands[0]))
+        score1 = eval7.evaluate(list(self.deck.peek(5) + self.hands[1]))
         if score0 > score1:
             delta = STARTING_STACK - self.stacks[1]
             if eval7.hand_type(score0) == 'Straight':
@@ -318,30 +318,11 @@ class Game():
     def __init__(self):
         suits = ['c', 'd', 'h', 's']
         values = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
-        perm = [values[i] for i in self.permute_values()]
-        # create global permutation dictionary
-        global PERM
-        PERM = {eval7.Card(values[i % 13] + suits[i // 13]) :
-                eval7.Card(perm[i % 13] + suits[i // 13])
-                for i in range(52)}
         self.log = ['6.176 MIT Pokerbots - ' + PLAYER_1_NAME + ' vs ' + PLAYER_2_NAME,
                     '---------------------------',
                     ' ' + ' '.join(values) + ' ',
-                    '[' + ' '.join(perm) + ']',
                     '---------------------------',]
         self.player_messages = [[], []]
-
-    def permute_values(self):
-        '''
-        Selects a value permutation for the whole game according the prior distribution.
-        '''
-        orig_perm = list(range(13))[::-1]
-        prop_perm = []
-        seed = geometric(p=0.25, size=13) - 1
-        for s in seed:
-            pop_i = len(orig_perm) - 1 - (s % len(orig_perm))
-            prop_perm.append(orig_perm.pop(pop_i))
-        return prop_perm
 
     def log_round_state(self, players, round_state):
         '''

@@ -36,9 +36,9 @@ class Player(Bot):
         self.n_outputs = 4 # == fold, check, call, min raise, 1/4 pot, 1/2 pot, 3/4 pot, pot, 1.5 pot, all in
 
         self.model = keras.models.Sequential([
-            keras.layers.Dense(32, activation="elu", input_shape=self.input_shape),
-            keras.layers.Dense(64, activation="elu"),
-            keras.layers.Dense(16, activation="elu"),
+            keras.layers.Dense(32, activation="relu", input_shape=self.input_shape),
+            keras.layers.Dense(64, activation="relu"),
+            keras.layers.Dense(16, activation="relu"),
             keras.layers.Dense(self.n_outputs)
         ])
         self.round_state = None
@@ -202,7 +202,7 @@ class Player(Bot):
         self.game_state = game_state
         self.terminal_state = terminal_state
         self.active = active
-        self.rewards = terminal_state.deltas[active]
+        self.rewards = 5 * terminal_state.deltas[active]
         self.prev_state = self.state
         self.state = self.getState()
         if self.new_round == 1:
@@ -260,14 +260,14 @@ class Player(Bot):
            min_raise, max_raise = round_state.raise_bounds()  # the smallest and largest numbers of chips for a legal bet/raise
            min_cost = min_raise - my_pip  # the cost of a minimum bet/raise
            max_cost = max_raise - my_pip  # the cost of a maximum bet/raise
-           return RaiseAction(min_raise)  
+           return RaiseAction(max_raise)  
         if CheckAction in legal_actions and action == 2:
             return CheckAction()
         if CallAction in legal_actions and action == 1:
             return CallAction()
         if FoldAction in legal_actions and action == 0:
             return FoldAction()
-        return CallAction()
+        return CheckAction()
 
 
 if __name__ == '__main__':
